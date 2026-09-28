@@ -1,0 +1,880 @@
+import sqlite3
+from datetime import datetime, date
+import hashlib
+import os
+
+# ============================================================
+# STUDENT ENROLLMENT & COURSE MANAGEMENT SYSTEM (SECMS)
+# Python + SQLite
+# ============================================================
+
+DB_NAME = "secms.db"
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+
+# Enable Foreign Keys
+cur.execute("PRAGMA foreign_keys = ON")
+
+
+# ============================================================
+# DATABASE TABLES
+# ============================================================
+
+cur.executescript("""
+CREATE TABLE IF NOT EXISTS admins (
+    admin_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS students (
+    student_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    phone TEXT,
+    dob TEXT,
+    address TEXT,
+    status TEXT DEFAULT 'Inactive'
+);
+
+CREATE TABLE IF NOT EXISTS courses (
+    course_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    duration TEXT,
+    credits INTEGER NOT NULL,
+    fee REAL DEFAULT 0,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS instructors (
+    instructor_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    instructor_code TEXT UNIQUE NOT NULL,
+    phone TEXT,
+    email TEXT,
+    expertise TEXT
+);
+
+CREATE TABLE IF NOT EXISTS enrollments (
+    enroll_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL,
+    course_id INTEGER NOT NULL,
+    instructor_id INTEGER,
+    enrollment_date TEXT NOT NULL,
+    status TEXT DEFAULT 'Requested',
+    fees_paid INTEGER DEFAULT 0,
+    total_amount REAL DEFAULT 0,
+    comments TEXT,
+
+    UNIQUE(student_id, course_id),
+
+    FOREIGN KEY(student_id)
+        REFERENCES students(student_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY(course_id)
+        REFERENCES courses(course_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY(instructor_id)
+        REFERENCES instructors(instructor_id)
+        ON DELETE SET NULL
+);
+""")
+
+conn.commit()
+
+
+# ============================================================
+# DEFAULT ADMIN
+# ============================================================
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+cur.execute("SELECT COUNT(*) FROM admins")
+if cur.fetchone()[0] == 0:
+    cur.execute(
+        "INSERT INTO admins(username, password) VALUES (?, ?)",
+        ("admin", hash_password("admin123"))
+    )
+    conn.commit()
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+def login():
+    print("\n========== SECMS ADMIN LOGIN ==========")
+
+    username = input("Username: ").strip()
+    password = input("Password: ").strip()
+
+    hashed = hash_password(password)
+
+    cur.execute(
+        "SELECT * FROM admins WHERE username = ? AND password = ?",
+        (username, hashed)
+    )
+
+    admin = cur.fetchone()
+
+    if admin:
+        print("\nLogin successful!")
+        return True
+
+    print("\nInvalid username or password.")
+    return False
+
+
+# ============================================================
+# STUDENT MANAGEMENT
+# ============================================================
+
+def add_student():
+
+    print("\n========== ADD STUDENT ==========")
+
+    name = input("Student Name: ").strip()
+    email = input("Email: ").strip()
+    phone = input("Phone: ").strip()
+    dob = input("Date of Birth (YYYY-MM-DD): ").strip()
+    address = input("Address: ").strip()
+
+    if not name or not email:
+        print("Name and Email are required.")
+        return
+
+    try:
+        cur.execute("""
+            INSERT INTO students
+            (name, email, phone, dob, address)
+            VALUES (?, ?, ?, ?, ?)
+        """, (name, email, phone, dob, address))
+
+        conn.commit()
+
+        print("Student added successfully.")
+
+    except sqlite3.IntegrityError:
+        print("Email already exists.")
+
+
+def view_students():
+
+    print("\n========== STUDENTS ==========")
+
+    rows = cur.execute("""
+        SELECT student_id, name, email, phone, dob, address, status
+        FROM students
+        ORDER BY student_id
+    """).fetchall()
+
+    if not rows:
+        print("No students found.")
+        return
+
+    for r in rows:
+        print("-" * 70)
+        print(f"ID      : {r[0]}")
+        print(f"Name    : {r[1]}")
+        print(f"Email   : {r[2]}")
+        print(f"Phone   : {r[3]}")
+        print(f"DOB     : {r[4]}")
+        print(f"Address : {r[5]}")
+        print(f"Status  : {r[6]}")
+
+
+def search_student():
+
+    print("\n========== SEARCH STUDENT ==========")
+
+    keyword = input("Enter name or email: ").strip()
+
+    rows = cur.execute("""
+        SELECT student_id, name, email, phone, status
+        FROM students
+        WHERE name LIKE ? OR email LIKE ?
+    """, (f"%{keyword}%", f"%{keyword}%")).fetchall()
+
+    if not rows:
+        print("Student not found.")
+        return
+
+    for r in rows:
+        print(
+            f"ID: {r[0]} | "
+            f"Name: {r[1]} | "
+            f"Email: {r[2]} | "
+            f"Phone: {r[3]} | "
+            f"Status: {r[4]}"
+        )
+
+
+def update_student():
+
+    print("\n========== UPDATE STUDENT ==========")
+
+    sid = input("Student ID: ").strip()
+
+    cur.execute(
+        "SELECT * FROM students WHERE student_id = ?",
+        (sid,)
+    )
+
+    student = cur.fetchone()
+
+    if not student:
+        print("Student ID not found.")
+        return
+
+    name = input(f"Name [{student[1]}]: ").strip() or student[1]
+    email = input(f"Email [{student[2]}]: ").strip() or student[2]
+    phone = input(f"Phone [{student[3]}]: ").strip() or student[3]
+    dob = input(f"DOB [{student[4]}]: ").strip() or student[4]
+    address = input(f"Address [{student[5]}]: ").strip() or student[5]
+    status = input(f"Status [{student[6]}]: ").strip() or student[6]
+
+    try:
+        cur.execute("""
+            UPDATE students
+            SET name = ?,
+                email = ?,
+                phone = ?,
+                dob = ?,
+                address = ?,
+                status = ?
+            WHERE student_id = ?
+        """, (
+            name,
+            email,
+            phone,
+            dob,
+            address,
+            status,
+            sid
+        ))
+
+        conn.commit()
+
+        print("Student updated successfully.")
+
+    except sqlite3.IntegrityError:
+        print("Email already belongs to another student.")
+
+
+def delete_student():
+
+    print("\n========== DELETE STUDENT ==========")
+
+    sid = input("Student ID: ").strip()
+
+    cur.execute(
+        "DELETE FROM students WHERE student_id = ?",
+        (sid,)
+    )
+
+    conn.commit()
+
+    if cur.rowcount:
+        print("Student deleted successfully.")
+    else:
+        print("Student ID not found.")
+
+
+# ============================================================
+# COURSE MANAGEMENT
+# ============================================================
+
+def add_course():
+
+    print("\n========== ADD COURSE ==========")
+
+    title = input("Course Title: ").strip()
+    category = input(
+        "Category (Technical/Language/Non-Technical): "
+    ).strip()
+
+    duration = input("Duration: ").strip()
+
+    try:
+        credits = int(input("Credits: "))
+        fee = float(input("Course Fee: "))
+    except ValueError:
+        print("Credits must be integer and fee must be number.")
+        return
+
+    description = input("Description: ").strip()
+
+    if not title or not category:
+        print("Title and Category are required.")
+        return
+
+    cur.execute("""
+        INSERT INTO courses
+        (title, category, duration, credits, fee, description)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        title,
+        category,
+        duration,
+        credits,
+        fee,
+        description
+    ))
+
+    conn.commit()
+
+    print("Course added successfully.")
+
+
+def view_courses():
+
+    print("\n========== COURSES ==========")
+
+    rows = cur.execute("""
+        SELECT course_id,
+               title,
+               category,
+               duration,
+               credits,
+               fee,
+               description
+        FROM courses
+        ORDER BY course_id
+    """).fetchall()
+
+    if not rows:
+        print("No courses found.")
+        return
+
+    for r in rows:
+        print("-" * 70)
+        print(f"ID          : {r[0]}")
+        print(f"Title       : {r[1]}")
+        print(f"Category    : {r[2]}")
+        print(f"Duration    : {r[3]}")
+        print(f"Credits     : {r[4]}")
+        print(f"Course Fee  : ₹{r[5]:.2f}")
+        print(f"Description : {r[6]}")
+
+
+def search_course():
+
+    print("\n========== SEARCH COURSE ==========")
+
+    keyword = input("Enter course name/category: ").strip()
+
+    rows = cur.execute("""
+        SELECT course_id, title, category, credits, fee
+        FROM courses
+        WHERE title LIKE ? OR category LIKE ?
+    """, (
+        f"%{keyword}%",
+        f"%{keyword}%"
+    )).fetchall()
+
+    if not rows:
+        print("Course not found.")
+        return
+
+    for r in rows:
+        print(
+            f"ID: {r[0]} | "
+            f"Course: {r[1]} | "
+            f"Category: {r[2]} | "
+            f"Credits: {r[3]} | "
+            f"Fee: ₹{r[4]:.2f}"
+        )
+
+
+def update_course():
+
+    print("\n========== UPDATE COURSE ==========")
+
+    cid = input("Course ID: ").strip()
+
+    cur.execute(
+        "SELECT * FROM courses WHERE course_id = ?",
+        (cid,)
+    )
+
+    course = cur.fetchone()
+
+    if not course:
+        print("Course not found.")
+        return
+
+    title = input(f"Title [{course[1]}]: ").strip() or course[1]
+    category = input(
+        f"Category [{course[2]}]: "
+    ).strip() or course[2]
+
+    duration = input(
+        f"Duration [{course[3]}]: "
+    ).strip() or course[3]
+
+    try:
+        credits_input = input(
+            f"Credits [{course[4]}]: "
+        ).strip()
+
+        credits = int(credits_input) if credits_input else course[4]
+
+        fee_input = input(
+            f"Fee [{course[5]}]: "
+        ).strip()
+
+        fee = float(fee_input) if fee_input else course[5]
+
+    except ValueError:
+        print("Invalid number.")
+        return
+
+    description = input(
+        f"Description [{course[6]}]: "
+    ).strip() or course[6]
+
+    cur.execute("""
+        UPDATE courses
+        SET title = ?,
+            category = ?,
+            duration = ?,
+            credits = ?,
+            fee = ?,
+            description = ?
+        WHERE course_id = ?
+    """, (
+        title,
+        category,
+        duration,
+        credits,
+        fee,
+        description,
+        cid
+    ))
+
+    conn.commit()
+
+    print("Course updated successfully.")
+
+
+def delete_course():
+
+    print("\n========== DELETE COURSE ==========")
+
+    cid = input("Course ID: ").strip()
+
+    cur.execute(
+        "DELETE FROM courses WHERE course_id = ?",
+        (cid,)
+    )
+
+    conn.commit()
+
+    if cur.rowcount:
+        print("Course deleted successfully.")
+    else:
+        print("Course ID not found.")
+
+
+# ============================================================
+# INSTRUCTOR MANAGEMENT
+# ============================================================
+
+def add_instructor():
+
+    print("\n========== ADD INSTRUCTOR ==========")
+
+    name = input("Instructor Name: ").strip()
+    code = input("Instructor Code: ").strip()
+    phone = input("Phone: ").strip()
+    email = input("Email: ").strip()
+    expertise = input("Expertise: ").strip()
+
+    if not name or not code:
+        print("Name and Instructor Code are required.")
+        return
+
+    try:
+        cur.execute("""
+            INSERT INTO instructors
+            (name, instructor_code, phone, email, expertise)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            name,
+            code,
+            phone,
+            email,
+            expertise
+        ))
+
+        conn.commit()
+
+        print("Instructor added successfully.")
+
+    except sqlite3.IntegrityError:
+        print("Instructor code already exists.")
+
+
+def view_instructors():
+
+    print("\n========== INSTRUCTORS ==========")
+
+    rows = cur.execute("""
+        SELECT instructor_id,
+               name,
+               instructor_code,
+               phone,
+               email,
+               expertise
+        FROM instructors
+        ORDER BY instructor_id
+    """).fetchall()
+
+    if not rows:
+        print("No instructors found.")
+        return
+
+    for r in rows:
+        print("-" * 60)
+        print(f"ID        : {r[0]}")
+        print(f"Name      : {r[1]}")
+        print(f"Code      : {r[2]}")
+        print(f"Phone     : {r[3]}")
+        print(f"Email     : {r[4]}")
+        print(f"Expertise : {r[5]}")
+
+
+def delete_instructor():
+
+    print("\n========== DELETE INSTRUCTOR ==========")
+
+    iid = input("Instructor ID: ").strip()
+
+    cur.execute(
+        "DELETE FROM instructors WHERE instructor_id = ?",
+        (iid,)
+    )
+
+    conn.commit()
+
+    if cur.rowcount:
+        print("Instructor deleted successfully.")
+    else:
+        print("Instructor ID not found.")
+
+
+# ============================================================
+# AUTO ASSIGN INSTRUCTOR
+# ============================================================
+
+def auto_assign_instructor(course_id):
+
+    cur.execute(
+        "SELECT category FROM courses WHERE course_id = ?",
+        (course_id,)
+    )
+
+    result = cur.fetchone()
+
+    if not result:
+        return None
+
+    category = result[0].lower()
+
+    if "technical" in category:
+        expertise = "Technical"
+    elif "language" in category:
+        expertise = "Language"
+    else:
+        expertise = "Non-Technical"
+
+    cur.execute("""
+        SELECT instructor_id
+        FROM instructors
+        WHERE expertise LIKE ?
+        LIMIT 1
+    """, (f"%{expertise}%",))
+
+    instructor = cur.fetchone()
+
+    if instructor:
+        return instructor[0]
+
+    return None
+
+
+# ============================================================
+# ENROLLMENT
+# ============================================================
+
+def enroll_student():
+
+    print("\n========== NEW ENROLLMENT ==========")
+
+    sid = input("Student ID: ").strip()
+    cid = input("Course ID: ").strip()
+
+    # Check student
+    cur.execute(
+        "SELECT name FROM students WHERE student_id = ?",
+        (sid,)
+    )
+
+    student = cur.fetchone()
+
+    if not student:
+        print("Student ID not found.")
+        return
+
+    # Check course
+    cur.execute(
+        "SELECT title, fee FROM courses WHERE course_id = ?",
+        (cid,)
+    )
+
+    course = cur.fetchone()
+
+    if not course:
+        print("Course ID not found.")
+        return
+
+    # Check duplicate
+    cur.execute("""
+        SELECT enroll_id
+        FROM enrollments
+        WHERE student_id = ? AND course_id = ?
+    """, (sid, cid))
+
+    if cur.fetchone():
+        print("Student already enrolled in this course.")
+        return
+
+    instructor_id = auto_assign_instructor(cid)
+
+    comments = input("Comments: ").strip()
+
+    cur.execute("""
+        INSERT INTO enrollments
+        (
+            student_id,
+            course_id,
+            instructor_id,
+            enrollment_date,
+            status,
+            fees_paid,
+            total_amount,
+            comments
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        sid,
+        cid,
+        instructor_id,
+        date.today().isoformat(),
+        "Requested",
+        0,
+        course[1],
+        comments
+    ))
+
+    conn.commit()
+
+    print("\nEnrollment request created successfully.")
+
+    if instructor_id:
+        cur.execute(
+            "SELECT name FROM instructors WHERE instructor_id = ?",
+            (instructor_id,)
+        )
+
+        instructor = cur.fetchone()
+
+        if instructor:
+            print(f"Auto Assigned Instructor: {instructor[0]}")
+    else:
+        print("No suitable instructor found.")
+
+
+def view_enrollments():
+
+    print("\n========== ENROLLMENTS ==========")
+
+    rows = cur.execute("""
+        SELECT
+            e.enroll_id,
+            s.name,
+            c.title,
+            i.name,
+            e.enrollment_date,
+            e.status,
+            e.fees_paid,
+            e.total_amount,
+            e.comments
+        FROM enrollments e
+        JOIN students s
+            ON s.student_id = e.student_id
+        JOIN courses c
+            ON c.course_id = e.course_id
+        LEFT JOIN instructors i
+            ON i.instructor_id = e.instructor_id
+        ORDER BY e.enroll_id
+    """).fetchall()
+
+    if not rows:
+        print("No enrollments found.")
+        return
+
+    for r in rows:
+        fee_status = "Paid" if r[6] else "Pending"
+
+        print("-" * 80)
+        print(f"Enrollment ID : {r[0]}")
+        print(f"Student       : {r[1]}")
+        print(f"Course        : {r[2]}")
+        print(f"Instructor    : {r[3] or 'Not Assigned'}")
+        print(f"Date          : {r[4]}")
+        print(f"Status        : {r[5]}")
+        print(f"Fee           : ₹{r[7]:.2f}")
+        print(f"Fee Status    : {fee_status}")
+        print(f"Comments      : {r[8]}")
+
+
+# ============================================================
+# FEE PAYMENT
+# ============================================================
+
+def pay_fee():
+
+    print("\n========== FEE PAYMENT ==========")
+
+    eid = input("Enrollment ID: ").strip()
+
+    cur.execute("""
+        SELECT enroll_id, total_amount, fees_paid
+        FROM enrollments
+        WHERE enroll_id = ?
+    """, (eid,))
+
+    enrollment = cur.fetchone()
+
+    if not enrollment:
+        print("Enrollment not found.")
+        return
+
+    if enrollment[2]:
+        print("Fees already paid.")
+        return
+
+    cur.execute("""
+        UPDATE enrollments
+        SET fees_paid = 1
+        WHERE enroll_id = ?
+    """, (eid,))
+
+    conn.commit()
+
+    print(f"₹{enrollment[1]:.2f} payment recorded successfully.")
+
+
+# ============================================================
+# APPROVAL
+# ============================================================
+
+def approve_enrollment():
+
+    print("\n========== APPROVE ENROLLMENT ==========")
+
+    eid = input("Enrollment ID: ").strip()
+
+    cur.execute("""
+        SELECT student_id, status, fees_paid
+        FROM enrollments
+        WHERE enroll_id = ?
+    """, (eid,))
+
+    enrollment = cur.fetchone()
+
+    if not enrollment:
+        print("Enrollment not found.")
+        return
+
+    if enrollment[1] != "Requested":
+        print(f"Current status is {enrollment[1]}.")
+        return
+
+    if not enrollment[2]:
+        print("Fees must be paid before approval.")
+        return
+
+    cur.execute("""
+        UPDATE enrollments
+        SET status = 'Approved'
+        WHERE enroll_id = ?
+    """, (eid,))
+
+    cur.execute("""
+        UPDATE students
+        SET status = 'Active'
+        WHERE student_id = ?
+    """, (enrollment[0],))
+
+    conn.commit()
+
+    print("Enrollment approved.")
+    print("Student status changed to Active.")
+
+
+def reject_enrollment():
+
+    print("\n========== REJECT ENROLLMENT ==========")
+
+    eid = input("Enrollment ID: ").strip()
+
+    cur.execute("""
+        SELECT status
+        FROM enrollments
+        WHERE enroll_id = ?
+    """, (eid,))
+
+    enrollment = cur.fetchone()
+
+    if not enrollment:
+        print("Enrollment not found.")
+        return
+
+    if enrollment[0] != "Requested":
+        print("Only Requested enrollments can be rejected.")
+        return
+
+    reason = input("Rejection reason: ").strip()
+
+    cur.execute("""
+        UPDATE enrollments
+        SET status = 'Rejected',
+            comments = ?
+        WHERE enroll_id = ?
+    """, (reason, eid))
+
+    conn.commit()
+
+    print("Enrollment rejected.")
+
+
+# ============================================================
+# REPORTS
+# ============================================================
+
+def students_by_status():
+
+    print("\n========== STUDENTS BY STATUS ==========")
+
+    rows = cur.execute("""
+        SELECT status, COUNT(*)
+        FROM students
+        GROUP BY
